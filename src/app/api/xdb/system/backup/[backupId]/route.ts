@@ -6,11 +6,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { existsSync } from 'fs';
 import { readFile } from 'fs/promises';
+import { join } from 'path';
 
 import { authenticate, createErrorResponse, disableCORS } from '@/lib/middleware';
-import { getBackupFilePath } from '@/lib/backupUtils';
 
 const DATA_DIR = process.env.XDB_DATA_DIR || '/tmp/xdb';
+
+// Helper to get backup ZIP path
+function getBackupZipPath(backupId: string): string {
+  return join(DATA_DIR, '.backups', `${backupId}.zip`);
+}
 
 export async function GET(
   request: NextRequest,
@@ -35,7 +40,7 @@ export async function GET(
       return disableCORS(createErrorResponse('Invalid action. Use ?act=dw for download', 400));
     }
 
-    const backupPath = getBackupFilePath(DATA_DIR, backupId);
+    const backupPath = getBackupZipPath(backupId);
 
     if (!existsSync(backupPath)) {
       return disableCORS(createErrorResponse('Backup not found', 404));

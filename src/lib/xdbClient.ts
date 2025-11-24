@@ -168,7 +168,6 @@ export const xdbClient = {
   async restoreBackup(
     token: string,
     backupFile: File,
-    password: string,
   ): Promise<{
     status: 'success' | 'partial' | 'failed';
     message: string;
@@ -180,7 +179,6 @@ export const xdbClient = {
   }> {
     const formData = new FormData();
     formData.append('backup', backupFile);
-    formData.append('password', password);
 
     const response = await fetch(`${API_BASE}/system/restore`, {
       method: 'PUT',

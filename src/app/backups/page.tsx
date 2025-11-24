@@ -18,7 +18,6 @@ export default function BackupsPage() {
   const [success, setSuccess] = useState('');
   const [showRestoreModal, setShowRestoreModal] = useState(false);
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
-  const [restorePassword, setRestorePassword] = useState('');
   const [restorationReport, setRestorationReport] = useState<{
     status: 'success' | 'partial' | 'failed';
     message: string;
@@ -60,8 +59,8 @@ export default function BackupsPage() {
   };
 
   const handleRestoreBackup = async () => {
-    if (!token || !restoreFile || !restorePassword.trim()) {
-      setError('Please select a backup file and enter the password');
+    if (!token || !restoreFile) {
+      setError('Please select a backup file');
       return;
     }
 
@@ -70,13 +69,12 @@ export default function BackupsPage() {
       setError('');
       setSuccess('');
 
-      const result = await xdbClient.restoreBackup(token, restoreFile, restorePassword);
+      const result = await xdbClient.restoreBackup(token, restoreFile);
 
       setRestorationReport(result);
       setSuccess(`Restoration ${result.status}! ${result.restoredCount}/${result.totalCount} databases restored.`);
       setShowRestoreModal(false);
       setRestoreFile(null);
-      setRestorePassword('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to restore backup');
     } finally {
@@ -255,23 +253,11 @@ export default function BackupsPage() {
                     />
                   </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Backup Password</label>
-                    <input
-                      type="password"
-                      value={restorePassword}
-                      onChange={(e) => setRestorePassword(e.target.value)}
-                      placeholder="Enter the backup password (32 characters)"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-
                   <div className="flex space-x-3 pt-4">
                     <button
                       onClick={() => {
                         setShowRestoreModal(false);
                         setRestoreFile(null);
-                        setRestorePassword('');
                       }}
                       className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition font-medium"
                     >
@@ -279,7 +265,7 @@ export default function BackupsPage() {
                     </button>
                     <button
                       onClick={handleRestoreBackup}
-                      disabled={restoring || !restoreFile || !restorePassword.trim()}
+                      disabled={restoring || !restoreFile}
                       className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition font-medium"
                     >
                       {restoring ? 'Restoring...' : 'Restore'}
@@ -294,11 +280,11 @@ export default function BackupsPage() {
           <div className="mt-8 bg-blue-50 border border-blue-200 rounded-lg p-6">
             <h4 className="font-semibold text-blue-900 mb-2">💡 About Backups</h4>
             <ul className="text-sm text-blue-800 space-y-1">
-              <li>• Backups include all databases and are password-protected</li>
+              <li>• Backups include all databases and are stored as ZIP files</li>
               <li>• Passwords are 32 characters long and copied to clipboard after creation</li>
-              <li>• Checksums are verified during restoration</li>
-              <li>• System core contains encryption keys and backup metadata</li>
-              <li>• Maximum {5} backups are stored automatically (oldest are removed)</li>
+              <li>• Checksums are automatically verified during restoration</li>
+              <li>• Encryption keys are embedded in each backup for recovery</li>
+              <li>• Restoration supports partial recovery (corrupted files are skipped)</li>
             </ul>
           </div>
         </div>

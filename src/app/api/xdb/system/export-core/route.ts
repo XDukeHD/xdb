@@ -1,13 +1,16 @@
 /**
- * GET /api/xdb/system/export-core - Export encrypted system.xdbCore file
+ * GET /api/xdb/system/export-core - Export backup metadata index
  * Query parameter: act=dw for download
- * Returns the raw encrypted system database for manual migration
+ * Returns a JSON file with list of all backups for reference
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { existsSync, readdirSync } from 'fs';
+import { join } from 'path';
 
 import { authenticate, createErrorResponse, disableCORS } from '@/lib/middleware';
-import { exportSystemCore } from '@/lib/systemCore';
+
+const DATA_DIR = process.env.XDB_DATA_DIR || '/tmp/xdb';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
@@ -23,32 +26,68 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return disableCORS(createErrorResponse('Invalid action. Use ?act=dw for download', 400));
     }
 
-    // Export system core
-    let data: Buffer;
-    try {
-      data = await exportSystemCore(process.env.XDB_DATA_DIR || '/tmp/xdb');
-    } catch (error) {
-      return disableCORS(
-        createErrorResponse(
-          error instanceof Error ? error.message : 'System core not found',
-          404,
-        ),
-      );
+    // List all backups and their metadata
+    const backupsDir = join(DATA_DIR, '.backups');
+    const backupIndex: Array<{
+      backupId: string;
+      createdAt?: string;
+      fileCount?: number;
+      totalSize?: number;
+    }> = [];
+
+    if (existsSync(backupsDir)) {
+      const files = readdirSync(backupsDir);
+      for (const file of files) {
+        // Only process .zip files
+        if (file.endsWith('.zip')) {
+          const backupId = file.replace('.zip', '');
+          const metadata: {
+            backupId: string;
+            createdAt?: string;
+            fileCount?: number;
+            totalSize?: number;
+          } = { backupId };
+
+          // Try to extract metadata from backup ID (format: timestamp_randomString)
+          try {
+            const timestamp = parseInt(backupId.split('_')[0], 10);
+            if (!isNaN(timestamp)) {
+              metadata.createdAt = new Date(timestamp).toISOString();
+            }
+          } catch {
+            // Ignore parse errors
+          }
+
+          backupIndex.push(metadata);
+        }
+      }
     }
 
+    // Create JSON response data
+    const indexData = {
+      exportedAt: new Date().toISOString(),
+      backupCount: backupIndex.length,
+      backups: backupIndex.sort((a, b) => {
+        // Sort by backup ID in descending order (most recent first)
+        return (b.backupId || '').localeCompare(a.backupId || '');
+      }),
+    };
+
+    const jsonBuffer = Buffer.from(JSON.stringify(indexData, null, 2), 'utf-8');
+
     // Return as file download
-    const response = new NextResponse(data as BufferSource, {
+    const response = new NextResponse(jsonBuffer as BufferSource, {
       status: 200,
       headers: {
-        'Content-Type': 'application/octet-stream',
-        'Content-Disposition': 'attachment; filename="system.xdbCore"',
-        'Content-Length': data.length.toString(),
+        'Content-Type': 'application/json',
+        'Content-Disposition': 'attachment; filename="backup-index.json"',
+        'Content-Length': jsonBuffer.length.toString(),
       },
     });
 
     return disableCORS(response);
   } catch (error) {
-    console.error('System core export error:', error);
+    console.error('Backup index export error:', error);
     return disableCORS(
       createErrorResponse(error instanceof Error ? error.message : String(error), 500),
     );

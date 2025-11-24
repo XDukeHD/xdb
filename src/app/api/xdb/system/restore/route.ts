@@ -1,37 +1,35 @@
 /**
- * PUT /api/xdb/system/restore - Restore databases from a backup ZIP
- * Expects multipart form with 'backup' file and 'password' field
+ * PUT /api/xdb/system/restore - Restore databases from backup ZIP
+ * Simplified, working implementation
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { mkdir, writeFile, readFile, readdir } from 'fs/promises';
-import { existsSync } from 'fs';
+import { mkdir, readFile, writeFile } from 'fs/promises';
+import { existsSync, rmSync } from 'fs';
 import { join } from 'path';
-import { createHash } from 'crypto';
 import extractZip from 'extract-zip';
 
 import { authenticate, createErrorResponse, createSuccessResponse, getElapsedSeconds, disableCORS } from '@/lib/middleware';
 import { initializeXdb } from '@/lib/xdbInstance';
-import { deserializeBackupOverview } from '@/lib/backupUtils';
-import { recordRestoration } from '@/lib/systemCore';
-import type { RestorationReport } from '@/lib/backupTypes';
+import { hashData } from '@/lib/backupManager';
 
 const DATA_DIR = process.env.XDB_DATA_DIR || '/tmp/xdb';
-const XDB_ENCRYPTION_KEY = process.env.XDB_ENCRYPTION_KEY || '';
 
-/**
- * Calculate SHA-256 hash of a file
- */
-async function calculateFileSha256(filePath: string): Promise<string> {
-  const content = await readFile(filePath);
-  return createHash('sha256').update(content).digest('hex');
+interface ManifestFile {
+  name: string;
+  hash: string;
+  size: number;
 }
 
-/**
- * Temporary directory for extraction
- */
-function getTempExtractionDir(): string {
-  return join(DATA_DIR, `.restore_${Date.now()}`);
+interface BackupManifest {
+  backupId: string;
+  createdAt: string;
+  version: string;
+  files: ManifestFile[];
+  totalFiles: number;
+  totalSize: number;
+  authKey: string;
+  encryptionKey: string;
 }
 
 export async function PUT(request: NextRequest): Promise<NextResponse> {
@@ -45,200 +43,173 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       return auth.error!;
     }
 
-    // Verify environment
-    if (!XDB_ENCRYPTION_KEY) {
-      return disableCORS(
-        createErrorResponse('Server not properly configured (missing encryption key)', 500),
-      );
-    }
-
-    // Initialize system
+    // Initialize XDB
     await initializeXdb();
 
     // Parse form data
     const formData = await request.formData();
     const backupFile = formData.get('backup') as File | null;
-    const backupPassword = formData.get('password') as string | null;
 
-    if (!backupFile || !backupPassword) {
-      return disableCORS(
-        createErrorResponse('Both backup file and password are required', 400),
-      );
+    if (!backupFile) {
+      return disableCORS(createErrorResponse('Backup file is required', 400));
     }
 
-    // Create temp directory
-    tempDir = getTempExtractionDir();
+    // Create temp directory for extraction
+    tempDir = join(DATA_DIR, `.restore_${Date.now()}`);
     if (!existsSync(tempDir)) {
       await mkdir(tempDir, { recursive: true });
     }
 
-    // Write backup file to temp location
-    const backupBuffer = Buffer.from(await backupFile.arrayBuffer());
-    const tempBackupPath = join(tempDir, 'backup.zip');
-    await writeFile(tempBackupPath, backupBuffer);
+    // Write ZIP file to temp location
+    const zipBuffer = Buffer.from(await backupFile.arrayBuffer());
+    const zipPath = join(tempDir, 'backup.zip');
+    await writeFile(zipPath, zipBuffer);
 
-    // Extract ZIP with password
+    // Extract ZIP
     const extractDir = join(tempDir, 'extracted');
     if (!existsSync(extractDir)) {
       await mkdir(extractDir, { recursive: true });
     }
 
-    // Extract using extract-zip
-    // Note: Password handling depends on the ZIP library capability
     try {
-      await extractZip(tempBackupPath, { dir: extractDir });
+      await extractZip(zipPath, { dir: extractDir });
     } catch (error) {
-      // If standard extraction fails due to password, try with password option if supported
-      // For now, we'll just reject with error
       return disableCORS(
         createErrorResponse(
-          `Failed to extract backup ZIP: ${error instanceof Error ? error.message : String(error)}. Password may be incorrect.`,
+          `Failed to extract ZIP: ${error instanceof Error ? error.message : String(error)}`,
           400,
         ),
       );
     }
 
-    // Read backup overview
-    const overviewPath = join(extractDir, 'backup_overview.xdbInfo');
-    if (!existsSync(overviewPath)) {
+    // Read manifest
+    const manifestPath = join(extractDir, 'BACKUP_MANIFEST.json');
+    if (!existsSync(manifestPath)) {
       return disableCORS(
-        createErrorResponse('Backup overview file not found in ZIP', 400),
+        createErrorResponse('Backup manifest not found in ZIP', 400),
       );
     }
 
-    let overviewContent: string;
-    let overview: ReturnType<typeof deserializeBackupOverview>;
+    let manifest: BackupManifest;
     try {
-      overviewContent = (await readFile(overviewPath)).toString('utf-8');
-      overview = deserializeBackupOverview(overviewContent);
+      const manifestContent = await readFile(manifestPath, 'utf8');
+      manifest = JSON.parse(manifestContent);
     } catch (error) {
       return disableCORS(
         createErrorResponse(
-          `Failed to parse backup overview: ${error instanceof Error ? error.message : String(error)}`,
+          `Invalid backup manifest: ${error instanceof Error ? error.message : String(error)}`,
           400,
         ),
       );
     }
 
-    // Validate checksums and prepare restoration
-    const failures: Array<{ filename: string; reason: string }> = [];
-    const filesToRestore: string[] = [];
+    // Collect files from extracted directory
+    const filesToRestore: Array<{ name: string; data: Buffer; hash: string }> = [];
+    const errors: Array<{ file: string; reason: string }> = [];
 
-    for (const fileInfo of overview.files) {
-      const extractedPath = join(extractDir, fileInfo.filename);
+    for (const fileInfo of manifest.files) {
+      const filePath = join(extractDir, fileInfo.name);
 
-      if (!existsSync(extractedPath)) {
-        failures.push({
-          filename: fileInfo.filename,
+      if (!existsSync(filePath)) {
+        errors.push({
+          file: fileInfo.name,
           reason: 'File not found in archive',
         });
         continue;
       }
 
-      // Verify checksum
       try {
-        const actualChecksum = await calculateFileSha256(extractedPath);
-        if (actualChecksum !== fileInfo.checksum) {
-          failures.push({
-            filename: fileInfo.filename,
-            reason: `Checksum mismatch (expected ${fileInfo.checksum}, got ${actualChecksum})`,
+        const data = await readFile(filePath);
+        const hash = hashData(data);
+
+        // Verify hash
+        if (hash !== fileInfo.hash) {
+          errors.push({
+            file: fileInfo.name,
+            reason: `Checksum mismatch (expected ${fileInfo.hash}, got ${hash})`,
           });
           continue;
         }
-      } catch (error) {
-        failures.push({
-          filename: fileInfo.filename,
-          reason: `Failed to verify checksum: ${error instanceof Error ? error.message : String(error)}`,
-        });
-        continue;
-      }
 
-      filesToRestore.push(fileInfo.filename);
+        filesToRestore.push({
+          name: fileInfo.name,
+          data,
+          hash,
+        });
+      } catch (error) {
+        errors.push({
+          file: fileInfo.name,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
 
-    // Restore valid files
+    // Restore files to DATA_DIR
+    if (!existsSync(DATA_DIR)) {
+      await mkdir(DATA_DIR, { recursive: true });
+    }
+
     let restoredCount = 0;
-    const xdbDir = DATA_DIR;
-    if (!existsSync(xdbDir)) {
-      await mkdir(xdbDir, { recursive: true });
-    }
+    const restoreErrors: Array<{ file: string; reason: string }> = [];
 
-    for (const fileName of filesToRestore) {
+    for (const file of filesToRestore) {
       try {
-        const sourcePath = join(extractDir, fileName);
-        const destPath = join(xdbDir, fileName);
-
-        const fileContent = await readFile(sourcePath);
-        await writeFile(destPath, fileContent);
-
+        const destPath = join(DATA_DIR, file.name);
+        await writeFile(destPath, file.data);
         restoredCount++;
-        console.log(`Restored database: ${fileName}`);
       } catch (error) {
-        failures.push({
-          filename: fileName,
-          reason: `Failed to restore: ${error instanceof Error ? error.message : String(error)}`,
+        restoreErrors.push({
+          file: file.name,
+          reason: error instanceof Error ? error.message : String(error),
         });
       }
     }
 
-    // Determine restoration status
-    const status = failures.length === 0 ? 'success' : failures.length < filesToRestore.length ? 'partial' : 'failed';
+    // Combine all errors
+    const allErrors = [...errors, ...restoreErrors];
+    const status = allErrors.length === 0 ? 'success' : restoredCount > 0 ? 'partial' : 'failed';
 
-    // Generate failure report if needed
-    let failureLog: string | undefined;
-    if (failures.length > 0) {
-      failureLog = failures.map(f => `${f.filename}: ${f.reason}`).join('\n');
+    // Clean up temp directory
+    if (existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true, force: true });
     }
 
-    // Record restoration event
-    const backupId = overview.backupId;
-    await recordRestoration(DATA_DIR, XDB_ENCRYPTION_KEY, backupId, status, failureLog);
-
-    // Reload engine to reflect restored databases
-    try {
-      // Force reload of databases from disk
-      const restoredDatabases = await readdir(xdbDir);
-      for (const dbFile of restoredDatabases) {
-        if (dbFile.endsWith('.xdb')) {
-          const dbName = dbFile.replace('.xdb', '');
-          // Databases will be lazy-loaded on next access
-          console.log(`Database available for restoration: ${dbName}`);
-        }
-      }
-    } catch (error) {
-      console.error('Error discovering restored databases:', error);
-    }
-
-    // Create restoration report
-    const report: RestorationReport = {
-      status,
-      message:
-        status === 'success'
-          ? 'All databases restored successfully'
-          : status === 'partial'
-            ? `${restoredCount} of ${overview.totalFiles} databases restored successfully`
-            : 'Restoration failed - no databases were restored',
-      restoredCount,
-      failedCount: failures.length,
-      totalCount: overview.totalFiles,
-      failures,
-      timestamp: new Date().toISOString(),
-    };
-
-    // Return response
-    const response = createSuccessResponse(report, getElapsedSeconds(startTime), status === 'success' ? 200 : 207);
-
-    return disableCORS(response);
+    return disableCORS(
+      createSuccessResponse(
+        {
+          status,
+          message:
+            status === 'success'
+              ? 'All databases restored successfully'
+              : status === 'partial'
+                ? `${restoredCount}/${manifest.totalFiles} databases restored`
+                : 'Restoration failed',
+          restoredCount,
+          failedCount: allErrors.length,
+          totalCount: manifest.totalFiles,
+          failures: allErrors,
+          timestamp: new Date().toISOString(),
+        },
+        getElapsedSeconds(startTime),
+        status === 'success' ? 200 : status === 'partial' ? 207 : 400,
+      ),
+    );
   } catch (error) {
+    // Clean up on error
+    if (tempDir && existsSync(tempDir)) {
+      try {
+        rmSync(tempDir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+
     console.error('Restoration error:', error);
     return disableCORS(
       createErrorResponse(error instanceof Error ? error.message : String(error), 500),
     );
   }
 }
-
-// Cleanup temp directory would happen via cron or during next execution
-// For now, we leave it for debugging
 
 export async function OPTIONS(): Promise<NextResponse> {
   return disableCORS(new NextResponse(null, { status: 204 }));
