@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { xdbClient } from '@/lib/xdbClient';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import MainLayout from '@/components/MainLayout';
-import { ArrowLeft, Download, Plus, AlertCircle, Loader, Check, X, HardDrive } from 'lucide-react';
+import { ArrowLeft, Download, Plus, AlertCircle, Loader, Check, X, Copy, Calendar, HardDrive, Trash2 } from 'lucide-react';
 
 export default function BackupsPage() {
   const router = useRouter();
@@ -14,10 +14,19 @@ export default function BackupsPage() {
   
   const [creating, setCreating] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [showRestoreModal, setShowRestoreModal] = useState(false);
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [copiedPassword, setCopiedPassword] = useState<string | null>(null);
+  const [backups, setBackups] = useState<Array<{
+    backupId: string;
+    password: string;
+    createdAt: string;
+    fileSize: number;
+    downloadLink: string;
+  }>>([]);
   const [restorationReport, setRestorationReport] = useState<{
     status: 'success' | 'partial' | 'failed';
     message: string;
@@ -28,10 +37,22 @@ export default function BackupsPage() {
     timestamp: string;
   } | null>(null);
 
+  // Load backups on mount
   useEffect(() => {
-    // In a real app, we'd load the list of backups
-    // For now, this is a skeleton that will work once we add backup listing to the API
-  }, [token]);
+    loadBackups();
+  }, []);
+
+  const loadBackups = async () => {
+    try {
+      setLoading(true);
+      const backupList = await xdbClient.listBackups();
+      setBackups(backupList);
+    } catch (err) {
+      console.error('Failed to load backups:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleCreateBackup = async () => {
     if (!token) return;
@@ -43,14 +64,13 @@ export default function BackupsPage() {
 
       const result = await xdbClient.createBackup(token);
 
-      setSuccess(`Backup created successfully! Backup ID: ${result.backupId}`);
-      console.log('Backup details:', result);
+      setSuccess(`✓ Backup created! Password copied to clipboard. ID: ${result.backupId}`);
       
       // Copy password to clipboard
       navigator.clipboard.writeText(result.password);
-      setSuccess(`Backup created! Password copied to clipboard. ID: ${result.backupId}`);
 
-      // In a real app, you might want to add this to the local backups list
+      // Reload backups list
+      await loadBackups();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create backup');
     } finally {
@@ -72,7 +92,7 @@ export default function BackupsPage() {
       const result = await xdbClient.restoreBackup(token, restoreFile);
 
       setRestorationReport(result);
-      setSuccess(`Restoration ${result.status}! ${result.restoredCount}/${result.totalCount} databases restored.`);
+      setSuccess(`✓ Restoration ${result.status}! ${result.restoredCount}/${result.totalCount} databases restored.`);
       setShowRestoreModal(false);
       setRestoreFile(null);
     } catch (err) {
@@ -82,23 +102,22 @@ export default function BackupsPage() {
     }
   };
 
-  const handleExportSystemCore = async () => {
-    if (!token) return;
+  const copyToClipboard = async (text: string, backupId: string) => {
+    await navigator.clipboard.writeText(text);
+    setCopiedPassword(backupId);
+    setTimeout(() => setCopiedPassword(null), 2000);
+  };
 
-    try {
-      const blob = await xdbClient.exportSystemCore(token);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `system.xdbCore_${Date.now()}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      setSuccess('System core exported successfully');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to export system core');
-    }
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+  };
+
+  const formatDate = (dateString: string): string => {
+    return new Date(dateString).toLocaleString();
   };
 
   return (
@@ -184,18 +203,101 @@ export default function BackupsPage() {
             <div className="bg-white rounded-lg shadow p-6 border border-gray-200 hover:border-purple-300 transition">
               <div className="flex items-start justify-between mb-4">
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-900">Export System Core</h3>
-                  <p className="text-gray-600 text-sm mt-1">Download encrypted system database for manual migration</p>
+                  <h3 className="text-lg font-semibold text-gray-900">Backup Metadata</h3>
+                  <p className="text-gray-600 text-sm mt-1">Export index of all backups</p>
                 </div>
                 <HardDrive className="w-8 h-8 text-purple-500" />
               </div>
               <button
-                onClick={handleExportSystemCore}
+                onClick={async () => {
+                  try {
+                    const blob = await xdbClient.exportSystemCore(token!);
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `backup-index_${Date.now()}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    setSuccess('✓ Backup index exported successfully');
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : 'Failed to export');
+                  }
+                }}
                 className="w-full bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg transition font-medium"
               >
-                Export Core
+                Export Index
               </button>
             </div>
+          </div>
+
+          {/* Existing Backups */}
+          <div className="bg-white rounded-lg shadow p-6 mb-8">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Existing Backups</h3>
+            
+            {loading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader className="w-5 h-5 animate-spin text-gray-400" />
+                <span className="ml-2 text-gray-600">Loading backups...</span>
+              </div>
+            ) : backups.length === 0 ? (
+              <div className="text-center py-8">
+                <p className="text-gray-600">No backups yet. Create your first backup to get started!</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-200">
+                      <th className="text-left py-3 px-4 font-semibold text-gray-900">Backup ID</th>
+                      <th className="text-left py-3 px-4 font-semibold text-gray-900">Created</th>
+                      <th className="text-left py-3 px-4 font-semibold text-gray-900">Size</th>
+                      <th className="text-left py-3 px-4 font-semibold text-gray-900">Password</th>
+                      <th className="text-left py-3 px-4 font-semibold text-gray-900">Download</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {backups.map((backup) => (
+                      <tr key={backup.backupId} className="border-b border-gray-100 hover:bg-gray-50">
+                        <td className="py-3 px-4">
+                          <code className="text-xs bg-gray-100 px-2 py-1 rounded">{backup.backupId.substring(0, 20)}...</code>
+                        </td>
+                        <td className="py-3 px-4 text-gray-600">{formatDate(backup.createdAt)}</td>
+                        <td className="py-3 px-4 text-gray-600">{formatFileSize(backup.fileSize)}</td>
+                        <td className="py-3 px-4">
+                          <div className="flex items-center space-x-2">
+                            <code className="text-xs bg-gray-100 px-2 py-1 rounded font-mono">{backup.password.substring(0, 8)}...</code>
+                            <button
+                              onClick={() => copyToClipboard(backup.password, backup.backupId)}
+                              className="text-gray-600 hover:text-blue-600 transition"
+                              title="Copy password"
+                            >
+                              {copiedPassword === backup.backupId ? (
+                                <Check className="w-4 h-4 text-green-600" />
+                              ) : (
+                                <Copy className="w-4 h-4" />
+                              )}
+                            </button>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <a
+                            href={backup.downloadLink}
+                            download={`${backup.backupId}.zip`}
+                            className="inline-flex items-center space-x-1 text-blue-600 hover:text-blue-800 transition"
+                            title="Download backup"
+                          >
+                            <Download className="w-4 h-4" />
+                            <span>Download</span>
+                          </a>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           {/* Restoration Report */}

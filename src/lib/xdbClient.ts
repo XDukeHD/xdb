@@ -211,6 +211,34 @@ export const xdbClient = {
 
     return response.blob();
   },
+
+  async listBackups(): Promise<
+    Array<{
+      backupId: string;
+      password: string;
+      createdAt: string;
+      fileSize: number;
+      downloadLink: string;
+    }>
+  > {
+    const response = await fetch(`${API_BASE}/system/backups`, {
+      method: 'GET',
+    });
+
+    const data: ApiResponse = await response.json();
+
+    if (data.status !== 'ok') {
+      throw new Error(data.error || 'Failed to list backups');
+    }
+
+    return (data.data as { backups: Array<{
+      backupId: string;
+      password: string;
+      createdAt: string;
+      fileSize: number;
+      downloadLink: string;
+    }> }).backups || [];
+  },
 };
 
 export type { QueryResult, DatabaseInfo, TableInfo, ColumnDefinition };

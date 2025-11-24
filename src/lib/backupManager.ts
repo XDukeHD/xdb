@@ -134,12 +134,23 @@ export async function loadBackupMetadata(dataDir: string, backupId: string): Pro
 }
 
 /**
- * Get backup password (from environment or system core)
+ * Get backup password (retrieve from passwords.json file)
  */
-export function getBackupPassword(): string {
-  // For now, we can store passwords in a simple JSON file
-  // In production, use system.xdbCore encryption
-  return generatePassword();
+export async function getBackupPassword(dataDir: string, backupId: string): Promise<string | null> {
+  const backupDir = getBackupDir(dataDir);
+  const passwordsFile = join(backupDir, '.passwords.json');
+
+  if (!existsSync(passwordsFile)) {
+    return null;
+  }
+
+  try {
+    const content = await readFile(passwordsFile, 'utf8');
+    const passwords = JSON.parse(content) as Record<string, { password: string; createdAt: string }>;
+    return passwords[backupId]?.password || null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -222,4 +233,98 @@ export async function restoreFilesFromMetadata(
   }
 
   return { success, failed, errors };
+}
+
+/**
+ * Store backup password
+ */
+export async function storeBackupPassword(
+  dataDir: string,
+  backupId: string,
+  password: string,
+): Promise<void> {
+  const backupDir = getBackupDir(dataDir);
+  const passwordsFile = join(backupDir, '.passwords.json');
+
+  let passwords: Record<string, { password: string; createdAt: string }> = {};
+
+  // Read existing passwords
+  if (existsSync(passwordsFile)) {
+    try {
+      const content = await readFile(passwordsFile, 'utf8');
+      passwords = JSON.parse(content);
+    } catch {
+      passwords = {};
+    }
+  }
+
+  // Add new password
+  passwords[backupId] = {
+    password,
+    createdAt: new Date().toISOString(),
+  };
+
+  // Write back
+  await writeFile(passwordsFile, JSON.stringify(passwords, null, 2));
+}
+
+/**
+ * List all backups with their passwords
+ */
+export async function listBackupsWithPasswords(
+  dataDir: string,
+): Promise<
+  Array<{
+    backupId: string;
+    password: string;
+    createdAt: string;
+    fileSize: number;
+  }>
+> {
+  const backupDir = getBackupDir(dataDir);
+  const passwordsFile = join(backupDir, '.passwords.json');
+
+  if (!existsSync(backupDir)) {
+    return [];
+  }
+
+  let passwords: Record<string, { password: string; createdAt: string }> = {};
+
+  if (existsSync(passwordsFile)) {
+    try {
+      const content = await readFile(passwordsFile, 'utf8');
+      passwords = JSON.parse(content);
+    } catch {
+      passwords = {};
+    }
+  }
+
+  const backups: Array<{
+    backupId: string;
+    password: string;
+    createdAt: string;
+    fileSize: number;
+  }> = [];
+
+  const entries = await readdir(backupDir);
+  for (const entry of entries) {
+    if (entry.endsWith('.zip') && !entry.startsWith('.')) {
+      const backupId = entry.replace('.zip', '');
+      const zipPath = join(backupDir, entry);
+      const stats = await readFile(zipPath).then(data => ({ size: data.length }));
+
+      const passwordInfo = passwords[backupId];
+      if (passwordInfo) {
+        backups.push({
+          backupId,
+          password: passwordInfo.password,
+          createdAt: passwordInfo.createdAt,
+          fileSize: stats.size,
+        });
+      }
+    }
+  }
+
+  // Sort by creation date descending (newest first)
+  return backups.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }

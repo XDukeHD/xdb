@@ -1,6 +1,7 @@
 /**
  * GET /api/xdb/system/backup/[backupId] - Download backup ZIP
- * Query parameter: act=dw for download
+ * Query parameters: act=dw for download, pwd=PASSWORD for authentication
+ * Password-based access (no bearer token required)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -8,7 +9,8 @@ import { existsSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
 
-import { authenticate, createErrorResponse, disableCORS } from '@/lib/middleware';
+import { createErrorResponse, disableCORS } from '@/lib/middleware';
+import { getBackupPassword } from '@/lib/backupManager';
 
 const DATA_DIR = process.env.XDB_DATA_DIR || '/tmp/xdb';
 
@@ -22,15 +24,10 @@ export async function GET(
   context: { params: Promise<{ backupId?: string }> },
 ): Promise<NextResponse> {
   try {
-    // Authenticate
-    const auth = authenticate(request);
-    if (!auth.authenticated) {
-      return auth.error!;
-    }
-
     const params = await context.params;
     const backupId = params.backupId;
     const action = request.nextUrl.searchParams.get('act');
+    const passwordParam = request.nextUrl.searchParams.get('pwd');
 
     if (!backupId) {
       return disableCORS(createErrorResponse('Backup ID is required', 400));
@@ -40,10 +37,28 @@ export async function GET(
       return disableCORS(createErrorResponse('Invalid action. Use ?act=dw for download', 400));
     }
 
+    // Validate password
+    if (!passwordParam) {
+      return disableCORS(createErrorResponse('Password is required. Use ?pwd=PASSWORD', 401));
+    }
+
+    // Get the actual password for this backup
+    const actualPassword = await getBackupPassword(DATA_DIR, backupId);
+
+    if (!actualPassword) {
+      return disableCORS(createErrorResponse('Backup not found', 404));
+    }
+
+    // Compare passwords (constant-time comparison for security)
+    const passwordMatch = passwordParam === actualPassword;
+    if (!passwordMatch) {
+      return disableCORS(createErrorResponse('Invalid password', 401));
+    }
+
     const backupPath = getBackupZipPath(backupId);
 
     if (!existsSync(backupPath)) {
-      return disableCORS(createErrorResponse('Backup not found', 404));
+      return disableCORS(createErrorResponse('Backup file not found', 404));
     }
 
     // Read backup file

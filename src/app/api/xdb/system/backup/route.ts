@@ -4,8 +4,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { mkdir, readFile } from 'fs/promises';
-import { existsSync, writeFileSync } from 'fs';
+import { mkdir } from 'fs/promises';
+import { existsSync } from 'fs';
 import archiver from 'archiver';
 import { createWriteStream } from 'fs';
 
@@ -18,6 +18,7 @@ import {
   createBackupMetadata,
   getBackupDir,
   getBackupZipPath,
+  storeBackupPassword,
 } from '@/lib/backupManager';
 
 const DATA_DIR = process.env.XDB_DATA_DIR || '/tmp/xdb';
@@ -112,27 +113,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       if (archiveError) reject(archiveError);
     });
 
-    // Store password in a simple passwords file
-    const passwordsPath = `${backupDir}/.passwords.json`;
-    let passwords: Record<string, { password: string; createdAt: string }> = {};
-
-    if (existsSync(passwordsPath)) {
-      try {
-        const content = await readFile(passwordsPath, 'utf8');
-        passwords = JSON.parse(content);
-      } catch {
-        passwords = {};
-      }
-    }
-
-    passwords[backupId] = { password, createdAt: now };
-    writeFileSync(passwordsPath, JSON.stringify(passwords, null, 2));
+    // Store password
+    await storeBackupPassword(DATA_DIR, backupId, password);
 
     return disableCORS(
       createSuccessResponse(
         {
           backupId,
-          downloadLink: `/api/xdb/system/backup/${backupId}?act=dw`,
+          downloadLink: `/api/xdb/system/backup/${backupId}?act=dw&pwd=${encodeURIComponent(password)}`,
           password,
           fileCount: dbFiles.length,
           totalSize: dbFiles.reduce((sum, f) => sum + f.data.length, 0),
