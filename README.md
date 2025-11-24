@@ -1,10 +1,32 @@
-# XDB - File-Based SQL-Compatible Database SystemThis is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# xDB - A Database que responde a SQL feita na base da preguiça
+## Fala, meus amigos que visitam meu GitHub! (Portuenglish Edition)
 
+An... por algum motivo alguém está olhando meu GitHub? Whatever! (Com um sorriso sarcástico, claro).
 
+Se você está olhando esse projeto, é porque algo te chamou a atenção, não? Bem, eu estava de boa aqui, fazendo um pequeno projetinho de CDN de filmes, e como sou sovina o suficiente para não pagar uma database MySQL, eu pensei: "Como eu uso uma DB no meu projeto de graça?".
 
-A production-ready, encrypted file-based database system implemented as a Next.js API, designed for Vercel deployment. XDB provides a SQL-like interface for managing databases and tables with full encryption at rest using AES-256-GCM.## Getting Started
+E voilà! Conheça o xDB.
 
+### Why Next.js?
 
+Pelo simples fato de com um clique, eu posso dar deploy na Vercel e estar ready to use sem fazer nada. É claro que eu podia adaptar com vercel.config ou outros métodos but eu estava entediado de madrugada e queria fazer isso anyway.
+
+E sim, foi, claro, feito usando IA. Afinal, eu não ia perder muito tempo em algo que um simples R$9,90 na UOL Host não resolveria minha vida com um MySQL. Mas foi divertido fazer isso, e é claro que vou usar para um Car#### daqui para a frente, porque eu não vou gastar money, e isso funciona bem para mim!
+
+Eventualmente, eu vou atualizar ele para manter seu running (para mim, obviamente). A web interface para testes está péssima, mas usável, e é o que me importa.
+
+Eu também fiz um NPM package para integrar facilmente com meus projetos. Aqui está o link: //TODO: COLOCAR LINK AQUI.
+
+**And that's all!**
+
+Se gostar dessa maluquice feita com AI, deixe uma star ali no topo. Não custa nada e seu dedo não vai cair. Antes que alguém me critique sobre usar IA: eu gosto de IA e sou enthusiast de IA. Sempre busco usá-la da melhor forma, até para me ajudar nos meus personal projects.
+
+**A IA não é a villain, baby!**
+
+Agora sim, fiquem com uma descrição do xDB, que por sinal está em inglês, porém nada que um google tradutor não resolve, né? quem mandou perder a ofensiva no Duolingo...
+
+---
+# xDB v1.1.0 Release Notes
 
 ## FeaturesFirst, run the development server:
 

@@ -81,8 +81,8 @@ export const xdbClient = {
   },
 
   // Table operations
-  async createTable(token: string, dbName: string, sql: string): Promise<{ message: string }> {
-    return apiCall(`/databases/${dbName}`, token, {
+  async createTable(token: string, dbName: string, tableName: string, sql: string): Promise<{ message: string }> {
+    return apiCall(`/databases/${dbName}/${tableName}`, token, {
       method: 'PUT',
       body: sql,
     });

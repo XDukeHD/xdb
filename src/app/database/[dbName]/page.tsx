@@ -89,7 +89,7 @@ export default function DatabasePage() {
         .join(', ');
 
       const sql = `CREATE TABLE ${tableName} (${columnDefs})`;
-      await xdbClient.createTable(token, dbName as string, sql);
+      await xdbClient.createTable(token, dbName as string, tableName, sql);
       
       setShowCreateModal(false);
       setTableName('');
