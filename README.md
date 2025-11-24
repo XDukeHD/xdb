@@ -448,7 +448,7 @@ npm run lint
 
 MIT
 
-## Next Steps
+## Next Steps / Algumas coisas que se eu lembrar e tiver paciencia eu faço depois
 
 - [ ] Implement JOIN support
 - [ ] Add query optimization
@@ -462,6 +462,8 @@ MIT
 - Documentation: Full API docs at `/api/xdb`
 - Issues: GitHub Issues
 - Examples: See `curl` commands above
+- Don't have, se vira nos 30 baby
+- Na minha máquina funciona, então tchau e bença
 
 ---
 
