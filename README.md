@@ -1,6 +1,5 @@
 # xDB - A Database que responde a SQL feita na base da preguiça
-## Fala, meus amigos que visitam meu GitHub! (Portuenglish Edition)
-
+## Fala, meus amigos que visitam meu GitHub!
 An... por algum motivo alguém está olhando meu GitHub? Whatever! (Com um sorriso sarcástico, claro).
 
 Se você está olhando esse projeto, é porque algo te chamou a atenção, não? Bem, eu estava de boa aqui, fazendo um pequeno projetinho de CDN de filmes, e como sou sovina o suficiente para não pagar uma database MySQL, eu pensei: "Como eu uso uma DB no meu projeto de graça?".
@@ -415,7 +414,204 @@ npm test
 npm run lint
 ```
 
-## Limitations & Tradeoffs
+## Backup & Restoration System
+
+xDB includes a comprehensive backup and restoration system designed for Vercel's ephemeral storage model.
+
+### Overview
+
+- **Automatic Backups**: Create full database backups with a single POST request
+- **Checksum Verification**: All backed-up files include SHA-256 checksums
+- **Selective Restoration**: Restore individual databases or entire backups with partial failure handling
+- **Encrypted Metadata**: Backup passwords and metadata stored in encrypted `system.xdbCore` file
+- **Maximum Backup Limit**: Automatically removes oldest backups when limit is reached (configurable, default: 5)
+- **Manual Migration**: Export encrypted system core for manual backup migration
+
+### Backup Endpoints
+
+#### Create Backup
+```
+POST /api/xdb/system/backup
+Authorization: Bearer <AUTH_TOKEN>
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "data": {
+    "backupId": "backup_1732434000000_a1b2c3d4",
+    "downloadLink": "/api/xdb/system/backup/backup_1732434000000_a1b2c3d4?act=dw",
+    "password": "Xx9aB2kL5mN8qR3vW6yZ1pT4sU7fH0jE",
+    "fileCount": 3,
+    "totalSize": 1024000,
+    "createdAt": "2025-11-24T10:00:00.000Z"
+  },
+  "elapsed_seconds": 2.345
+}
+```
+
+#### Download Backup
+```
+GET /api/xdb/system/backup/{BACKUP_ID}?act=dw
+Authorization: Bearer <AUTH_TOKEN>
+```
+
+Returns ZIP file with all `.xdb` files and `backup_overview.xdbInfo` manifest.
+
+#### Restore Backup
+```
+PUT /api/xdb/system/restore
+Authorization: Bearer <AUTH_TOKEN>
+Content-Type: multipart/form-data
+
+Form Data:
+- backup: <ZIP file>
+- password: <32-character password>
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "data": {
+    "status": "success",
+    "message": "All databases restored successfully",
+    "restoredCount": 3,
+    "failedCount": 0,
+    "totalCount": 3,
+    "failures": [],
+    "timestamp": "2025-11-24T10:05:00.000Z"
+  },
+  "elapsed_seconds": 1.234
+}
+```
+
+Partial restoration response (status "207"):
+```json
+{
+  "status": "ok",
+  "data": {
+    "status": "partial",
+    "message": "2 of 3 databases restored successfully",
+    "restoredCount": 2,
+    "failedCount": 1,
+    "totalCount": 3,
+    "failures": [
+      {
+        "filename": "corrupted_db.xdb",
+        "reason": "Checksum mismatch (expected abc123..., got def456...)"
+      }
+    ],
+    "timestamp": "2025-11-24T10:05:00.000Z"
+  },
+  "elapsed_seconds": 1.234
+}
+```
+
+#### Export System Core
+```
+GET /api/xdb/system/export-core?act=dw
+Authorization: Bearer <AUTH_TOKEN>
+```
+
+Returns the raw encrypted `system.xdbCore` file for manual migration. This file contains:
+- All backup metadata and passwords
+- Restoration history
+- Configuration
+
+### Backup File Format
+
+**backup_overview.xdbInfo** (unencrypted manifest inside ZIP):
+```
+XDBINFO_V1
+{
+  "format": "xdbInfo_v1",
+  "authKey": "your-auth-token",
+  "encryptionKey": "your-encryption-key-hex",
+  "createdAt": "2025-11-24T10:00:00.000Z",
+  "modifiedAt": "2025-11-24T10:00:00.000Z",
+  "engineVersion": "XdbQueryRunner",
+  "systemVersion": "1.0.0",
+  "files": [
+    {
+      "filename": "mydb.xdb",
+      "size": 1024000,
+      "checksum": "sha256_hex_string",
+      "compressed": false
+    }
+  ],
+  "totalFiles": 1,
+  "totalSize": 1024000,
+  "backupId": "backup_1732434000000_a1b2c3d4"
+}
+XDBINFO_END
+```
+
+**system.xdbCore** (encrypted system database):
+- Stores backup registry with passwords (encrypted with XDB_ENCRYPTION_KEY)
+- Records restoration history
+- Tracks backup metadata and checksums
+- Only accessible by the system with proper encryption key
+
+### Environment Configuration
+
+Add to `.env.local`:
+
+```env
+# Maximum number of backups to keep (default: 5)
+MAX_BACKUPS=5
+
+# XDB data directory (backups stored in .backups subdirectory)
+XDB_DATA_DIR=/tmp/xdb
+
+# Required: Encryption key for system.xdbCore
+XDB_ENCRYPTION_KEY=<generate-with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))">
+```
+
+### Backup Feature Highlights
+
+1. **Checksum Verification**: Every file is checksummed during backup and verified during restoration
+2. **Selective Restoration**: If some databases are corrupted, others are still restored
+3. **Password Protection**: Random 32-character passwords prevent accidental restoration
+4. **Automatic Cleanup**: Oldest backups are removed when exceeding MAX_BACKUPS limit
+5. **Encrypted Metadata**: Passwords and sensitive info stored in encrypted system.xdbCore
+6. **Version Tracking**: Engine and system versions recorded for future compatibility
+
+### Usage Example (JavaScript)
+
+```javascript
+import { xdbClient } from '@/lib/xdbClient';
+
+const token = 'your-auth-token';
+
+// Create backup
+const backup = await xdbClient.createBackup(token);
+console.log(`Backup created: ${backup.backupId}`);
+console.log(`Password: ${backup.password}`); // Save this!
+
+// Restore backup
+const file = document.querySelector('input[type="file"]').files[0];
+const password = 'Xx9aB2kL5mN8qR3vW6yZ1pT4sU7fH0jE';
+
+const result = await xdbClient.restoreBackup(token, file, password);
+console.log(`Restored ${result.restoredCount}/${result.totalCount} databases`);
+
+// Export system core for manual migration
+const coreBlob = await xdbClient.exportSystemCore(token);
+// Download for backup/migration
+```
+
+### UI
+
+Access the backup management interface at `/backups`:
+- Create new backups with one click
+- Download existing backups
+- Restore from ZIP files
+- View restoration reports
+- Export system core
+
+## Troubleshooting
 
 | Feature | Status | Notes |
 |---------|--------|-------|

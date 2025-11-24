@@ -150,6 +150,69 @@ export const xdbClient = {
   ): Promise<QueryResult> {
     return this.executeQuery(token, dbName, `DELETE FROM ${tableName} WHERE ${where}`);
   },
+
+  // Backup and restoration operations
+  async createBackup(token: string): Promise<{
+    backupId: string;
+    downloadLink: string;
+    password: string;
+    fileCount: number;
+    totalSize: number;
+    createdAt: string;
+  }> {
+    return apiCall('/system/backup', token, {
+      method: 'POST',
+    });
+  },
+
+  async restoreBackup(
+    token: string,
+    backupFile: File,
+    password: string,
+  ): Promise<{
+    status: 'success' | 'partial' | 'failed';
+    message: string;
+    restoredCount: number;
+    failedCount: number;
+    totalCount: number;
+    failures: Array<{ filename: string; reason: string }>;
+    timestamp: string;
+  }> {
+    const formData = new FormData();
+    formData.append('backup', backupFile);
+    formData.append('password', password);
+
+    const response = await fetch(`${API_BASE}/system/restore`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+      body: formData,
+    });
+
+    const data: ApiResponse = await response.json();
+
+    if (data.status !== 'ok') {
+      throw new Error(data.error || 'Restoration failed');
+    }
+
+    return data.data as unknown as ReturnType<typeof this.restoreBackup>;
+  },
+
+  async exportSystemCore(token: string): Promise<Blob> {
+    const response = await fetch(`${API_BASE}/system/export-core?act=dw`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to export system core');
+    }
+
+    return response.blob();
+  },
 };
 
 export type { QueryResult, DatabaseInfo, TableInfo, ColumnDefinition };

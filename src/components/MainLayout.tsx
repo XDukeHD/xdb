@@ -22,6 +22,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
   const isActive = (view: string) => {
     if (view === 'databases') return pathname === '/' || pathname.startsWith('/database');
     if (view === 'query') return pathname === '/query';
+    if (view === 'backups') return pathname === '/backups';
     return false;
   };
 
@@ -74,6 +75,17 @@ export default function MainLayout({ children }: MainLayoutProps) {
             >
               <Terminal className="w-5 h-5" />
               <span>SQL Query</span>
+            </button>
+            <button
+              onClick={() => router.push('/backups')}
+              className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition duration-200 ${
+                isActive('backups')
+                  ? 'bg-blue-50 text-blue-700 font-semibold shadow-sm'
+                  : 'text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <Database className="w-5 h-5" />
+              <span>Backups</span>
             </button>
             <div className="pt-4 mt-4 border-t border-gray-200">
               <p className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
